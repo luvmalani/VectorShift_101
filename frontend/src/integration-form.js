@@ -6,11 +6,13 @@ import {
 } from '@mui/material';
 import { AirtableIntegration } from './integrations/airtable';
 import { NotionIntegration } from './integrations/notion';
+import { HubspotIntegration } from './integrations/hubspot'; // Added HubSpot import
 import { DataForm } from './data-form';
 
 const integrationMapping = {
     'Notion': NotionIntegration,
     'Airtable': AirtableIntegration,
+    'HubSpot': HubspotIntegration, // Added HubSpot to mapping
 };
 
 export const IntegrationForm = () => {
