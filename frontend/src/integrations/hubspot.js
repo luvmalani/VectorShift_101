@@ -14,14 +14,17 @@ export const HubspotIntegration = ({ user, org, integrationParams, setIntegratio
         setIsConnecting(true);
         try {
             const formData = new FormData();
-            formData.append('user_id', user.id);
-            formData.append('org_id', org.id);
+            // user and org props are direct string IDs/names from integration-form.js
+            formData.append('user_id', user);
+            formData.append('org_id', org);
 
             const response = await axios.post('http://localhost:8000/integrations/hubspot/authorize', formData);
-            const authURL = response.data.authorization_url;
+
+            // The backend returns the authorization URL directly as a string in the response data.
+            const authURL = response.data;
 
             if (authURL) {
-                const newWindow = window.open(authURL, 'HubSpot Authorization', 'width=600,height=700');
+                const newWindow = window.open(authURL, 'HubSpot Authorization', 'width=600,height=700'); // Adjusted height slightly for typical OAuth popups
                 const timer = window.setInterval(() => {
                     if (newWindow.closed) {
                         window.clearInterval(timer);
@@ -29,7 +32,9 @@ export const HubspotIntegration = ({ user, org, integrationParams, setIntegratio
                     }
                 }, 1000); // Check every second
             } else {
-                alert('Error: Could not get authorization URL.');
+                // Handle cases where authURL might be missing or empty
+                console.error('Authorization URL not received from backend.');
+                alert('Could not initiate HubSpot connection: Authorization URL missing.');
                 setIsConnecting(false);
             }
         } catch (error) {
@@ -44,8 +49,9 @@ export const HubspotIntegration = ({ user, org, integrationParams, setIntegratio
         if (!isConnecting) setIsConnecting(true);
         try {
             const formData = new FormData();
-            formData.append('user_id', user.id);
-            formData.append('org_id', org.id);
+            // user and org props are direct string IDs/names from integration-form.js
+            formData.append('user_id', user);
+            formData.append('org_id', org);
 
             // Use POST for /credentials endpoint as per instructions (and similar to Airtable)
             const response = await axios.post('http://localhost:8000/integrations/hubspot/credentials', formData);

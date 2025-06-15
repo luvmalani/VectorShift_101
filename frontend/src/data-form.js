@@ -13,7 +13,8 @@ const endpointMapping = {
 
 export const DataForm = ({ integrationType, credentials }) => {
     const [loadedData, setLoadedData] = useState(null);
-    const [isLoadingItems, setIsLoadingItems] = useState(false); // For HubSpot specific loading
+    // State to manage loading status for the HubSpot data fetching button
+    const [isLoadingItems, setIsLoadingItems] = useState(false);
     const endpoint = endpointMapping[integrationType];
 
     // Generic load for Notion, Airtable
@@ -33,35 +34,37 @@ export const DataForm = ({ integrationType, credentials }) => {
         }
     }
 
+    // Handles fetching HubSpot items from the backend and logging them to the console
     const handleLoadHubspotItems = async () => {
-        setIsLoadingItems(true);
-        console.log("Loading HubSpot items...");
-        try {
-            const formData = new FormData();
-            formData.append('credentials', JSON.stringify(credentials)); // credentials prop is an object
+      // Set loading state to true to disable button and show loading indicator
+      setIsLoadingItems(true);
+      console.log("Loading HubSpot items..."); // Log initiation
 
-            // Endpoint specific to HubSpot for getting items
-            const response = await axios.post('http://localhost:8000/integrations/hubspot/get_hubspot_items', formData);
+      try {
+        const formData = new FormData();
+        // Credentials from props need to be stringified for the backend
+        formData.append('credentials', JSON.stringify(credentials));
 
-            console.log("HubSpot Items Loaded:", response.data);
-            alert('HubSpot items loaded! Check the console.');
-            // Optionally, you could set some state here if you want to display a confirmation or item count
-            // For now, just logging as per requirement.
-        } catch (error) {
-            console.error('Error loading HubSpot items:', error);
-            let errorMessage = 'Error loading HubSpot items.';
-            if (error.response && error.response.data && error.response.data.detail) {
-                errorMessage += ` Server said: ${error.response.data.detail}`;
-            }
-            alert(errorMessage + ' Check console for details.');
-        } finally {
-            setIsLoadingItems(false);
-        }
+        // API call to the specific backend endpoint for HubSpot items
+        const response = await axios.post('http://localhost:8000/integrations/hubspot/get_hubspot_items', formData);
+
+        // Log success and the fetched data to the console
+        console.log("HubSpot Items Loaded:", response.data);
+        alert('HubSpot items loaded! Check the console.'); // User feedback
+      } catch (error) {
+        // Log error details and inform the user
+        console.error("Error loading HubSpot items:", error.response ? error.response.data : error.message);
+        alert(`Error loading HubSpot items. ${error.response?.data?.detail || 'Check console for details.'}`);
+      } finally {
+        // Reset loading state regardless of outcome
+        setIsLoadingItems(false);
+      }
     };
 
     return (
         <Box display='flex' justifyContent='center' alignItems='center' flexDirection='column' width='100%'>
             <Box display='flex' flexDirection='column' width='100%'>
+                {/* Fallback to generic data loading for other integration types (Notion, Airtable) */}
                 {integrationType !== 'HubSpot' && (
                     <>
                         <TextField
@@ -90,13 +93,15 @@ export const DataForm = ({ integrationType, credentials }) => {
                     </>
                 )}
 
+                {/* Conditional rendering: Show HubSpot-specific button only if HubSpot integration is active */}
                 {integrationType === 'HubSpot' && (
                     <Button
                         variant="contained"
                         sx={{ mt: 2 }}
                         onClick={handleLoadHubspotItems}
-                        disabled={isLoadingItems}
+                        disabled={isLoadingItems} // Disable button while loading
                     >
+                        {/* Change button text based on loading state */}
                         {isLoadingItems ? 'Loading HubSpot Data...' : 'Load HubSpot Data (to Console)'}
                     </Button>
                 )}

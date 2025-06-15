@@ -3,6 +3,7 @@ import json
 import secrets
 import httpx
 import asyncio
+import logging
 # base64 is not needed for HubSpot state as it's a simple string
 
 from fastapi import Request, HTTPException
@@ -12,12 +13,19 @@ from datetime import datetime, timezone
 from backend.lib.redis_client import add_key_value_redis, get_value_redis, delete_key_redis
 from .integration_item import IntegrationItem
 
-HUBSPOT_CLIENT_ID = "hubspot-client-id-placeholder"
-HUBSPOT_CLIENT_SECRET = "hubspot-client-secret-placeholder"
-HUBSPOT_REDIRECT_URI = "http://localhost:8000/integrations/hubspot/oauth2callback"
-HUBSPOT_AUTHORIZATION_URL = "https://app.hubspot.com/oauth/authorize"
-HUBSPOT_TOKEN_URL = "https://api.hubapi.com/oauth/v1/token"
-HUBSPOT_SCOPES = "oauth crm.objects.contacts.read"
+# Configure basic logging
+logger = logging.getLogger(__name__)
+if not logger.handlers:  # Avoid adding multiple handlers
+    logging.basicConfig(level=logging.INFO,
+                        format='%(asctime)s - %(levelname)s - %(name)s - %(message)s',
+                        datefmt='%Y-%m-%d %H:%M:%S')
+
+HUBSPOT_CLIENT_ID = "c10bfa53-2a5d-4495-af55-ff64c142c6b9"
+HUBSPOT_CLIENT_SECRET = "f24b4b60-f214-47bf-833c-25b78b829edc"
+HUBSPOT_REDIRECT_URI = "http://localhost:8000/integrations/hubspot/oauth2callback" # Kept uppercase as per instruction
+hubspot_authorization_url = "https://app.hubspot.com/oauth/authorize" # Renamed
+hubspot_token_url = "https://api.hubapi.com/oauth/v1/token" # Renamed
+hubspot_scopes = "oauth crm.objects.contacts.read crm.objects.contacts.write" # Renamed and updated
 
 
 async def authorize_hubspot(user_id: str, org_id: str):
@@ -32,14 +40,14 @@ async def authorize_hubspot(user_id: str, org_id: str):
     params = {
         "client_id": HUBSPOT_CLIENT_ID,
         "redirect_uri": HUBSPOT_REDIRECT_URI,
-        "scope": HUBSPOT_SCOPES,
+        "scope": hubspot_scopes, # Updated usage
         "state": state,
         "response_type": "code", # Explicitly adding, though often default
     }
     # Construct URL with query parameters
     # httpx.URL can handle this, or f-string with urllib.parse.urlencode
     # For simplicity and since httpx is already imported:
-    auth_url = httpx.URL(HUBSPOT_AUTHORIZATION_URL, params=params)
+    auth_url = httpx.URL(hubspot_authorization_url, params=params) # Updated usage
     return str(auth_url)
 
 
@@ -82,7 +90,7 @@ async def oauth2callback_hubspot(request: Request):
     }
     async with httpx.AsyncClient() as client:
         try:
-            token_response = await client.post(HUBSPOT_TOKEN_URL, data=token_data)
+            token_response = await client.post(hubspot_token_url, data=token_data) # Updated usage
             token_response.raise_for_status()  # Raises HTTPStatusError for 4xx/5xx responses
         except httpx.HTTPStatusError as e:
             # Attempt to get more details from response if possible
@@ -113,8 +121,10 @@ async def oauth2callback_hubspot(request: Request):
         "expires_in": expires_in,
         # Optionally, calculate and store expiry_timestamp = time.time() + expires_in
     }
+    redis_key = f"hubspot_credentials:{original_user_id}:{original_org_id}" # Updated Redis key structure
+    logger.info(f"Saving credentials to key: {redis_key}")
     await add_key_value_redis(
-        f"hubspot_credentials:{original_org_id}:{original_user_id}",
+        redis_key,
         json.dumps(credentials_to_store),
         expire_secs=600  # Aligning with Airtable example, can be adjusted
     )
@@ -131,7 +141,9 @@ async def oauth2callback_hubspot(request: Request):
 
 
 async def get_hubspot_credentials(user_id: str, org_id: str):
-    credentials_json = await get_value_redis(f"hubspot_credentials:{org_id}:{user_id}")
+    redis_key = f"hubspot_credentials:{user_id}:{org_id}" # Updated Redis key structure
+    logger.info(f"Fetching credentials from key: {redis_key}")
+    credentials_json = await get_value_redis(redis_key)
     if not credentials_json:
         raise HTTPException(status_code=404, detail="HubSpot credentials not found.")
 
@@ -139,7 +151,8 @@ async def get_hubspot_credentials(user_id: str, org_id: str):
     # This pattern might be for short-lived credential fetching for a single operation.
     # If credentials are meant to be long-lived and re-used, deleting them here might be premature.
     # However, following the prompt for now.
-    await delete_key_redis(f"hubspot_credentials:{org_id}:{user_id}")
+    # Consider whether to log before deleting if needed for audit.
+    await delete_key_redis(redis_key)
 
     return json.loads(credentials_json)
 
@@ -160,8 +173,7 @@ def parse_hubspot_date(date_str: str | None) -> datetime | None:
              return dt.replace(tzinfo=timezone.utc)
         return dt.astimezone(timezone.utc)
     except ValueError:
-        # Log a warning here if proper logging is set up
-        # print(f"Warning: Could not parse HubSpot date string: {date_str}")
+        logger.warning(f"Could not parse HubSpot date string: {date_str}")
         return None
 
 
@@ -200,14 +212,20 @@ async def create_integration_item_metadata_object(hubspot_item_json: dict, item_
     )
 
 async def get_items_hubspot(credentials_json_str: str) -> list[IntegrationItem]:
+    logger.info("get_items_hubspot CALLED")
     try:
         credentials = json.loads(credentials_json_str)
-    except json.JSONDecodeError:
-        raise HTTPException(status_code=400, detail="Invalid credentials format.")
+        logger.info("Parsed credentials successfully")
+    except json.JSONDecodeError as e:
+        logger.error(f"Failed to parse credentials: {e}")
+        raise HTTPException(status_code=400, detail=f"Invalid credentials format: {e}")
 
     access_token = credentials.get('access_token')
     if not access_token:
+        logger.error("Access token missing from credentials")
         raise HTTPException(status_code=401, detail="Access token missing from HubSpot credentials.")
+
+    logger.info(f"Access token (partial): {access_token[:10]}...")
 
     # Fetching contacts. Properties can be adjusted as needed.
     contacts_api_url_base = "https://api.hubapi.com/crm/v3/objects/contacts"
@@ -220,9 +238,11 @@ async def get_items_hubspot(credentials_json_str: str) -> list[IntegrationItem]:
 
     async with httpx.AsyncClient() as client:
         while current_url:
+            logger.info(f"Requesting: {current_url}")
             try:
                 response = await client.get(current_url, headers=headers)
                 response.raise_for_status()  # Raise an exception for HTTP errors (4xx or 5xx)
+                logger.info(f"Response status: {response.status_code}")
             except httpx.HTTPStatusError as e:
                 error_detail = e.response.text
                 try:
@@ -231,13 +251,17 @@ async def get_items_hubspot(credentials_json_str: str) -> list[IntegrationItem]:
                         error_detail = error_json["message"]
                 except ValueError:
                     pass # Use raw text if not JSON
+                logger.error(f"HubSpot API error: {error_detail}")
                 raise HTTPException(status_code=e.response.status_code,
                                     detail=f"Failed to fetch data from HubSpot API: {error_detail}")
             except httpx.RequestError as e:
+                logger.error(f"Network error: {str(e)}")
                 raise HTTPException(status_code=500, detail=f"Request to HubSpot API failed: {str(e)}")
 
             response_data = response.json()
+            logger.debug(f"Raw response (first 500 chars): {json.dumps(response_data, indent=2)[:500]}")
             results = response_data.get('results', [])
+            logger.info(f"Found {len(results)} contacts")
 
             for item_json in results:
                 # The create_integration_item_metadata_object is now async
@@ -246,10 +270,18 @@ async def get_items_hubspot(credentials_json_str: str) -> list[IntegrationItem]:
 
             # Handle pagination
             paging_info = response_data.get('paging')
-            if paging_info and paging_info.get('next'):
+            if paging_info and paging_info.get('next') and paging_info['next'].get('link'):
                 current_url = paging_info['next'].get('link')
+                logger.info("Following next page...")
             else:
                 current_url = None
+                logger.info("No more pages")
 
-    print(f"Fetched {len(all_items)} HubSpot items: {all_items}") # As requested
+    logger.info(f"Final result: {len(all_items)} contacts fetched.")
+    if all_items:
+        logger.info("First 5 contacts fetched:")
+        for i, item in enumerate(all_items[:5]):
+            logger.info(f"  {i+1}. Name: {item.name}, ID: {item.id}")
+    else:
+        logger.info("No contacts fetched.")
     return all_items
